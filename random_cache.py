@@ -1,6 +1,12 @@
-from functools import wraps
-from time import time
 import random
+import sys
+from functools import wraps
+from gc import get_referents
+from itertools import chain
+from time import time
+from types import ModuleType, FunctionType
+
+from pympler import asizeof
 
 def timing(cases, capacity):
     def timing_with_cases(f):
@@ -10,9 +16,10 @@ def timing(cases, capacity):
             result = f(*args, **kw)
             te = time()
             cache = args[0]
+            size = asizeof.asizeof(cache)
             name = f'{cache.__class__.__name__:<10}(cap={capacity})'
             print(
-                f'{name:<30}\ttotal puts:{cases},\tper put time (ns):{(te - ts) * 1000 * 1000 / cases:.4f},\treplacement_counter:{cache._replacement_counter},\tper replacement time (ns):{((te - ts) * 1000 * 1000 / cache._replacement_counter) if cache._replacement_counter else 0.0 :.4f}')
+                f'{name:<30}\ttotal puts:{cases},\tper put time (ns):{(te - ts) * 1000 * 1000 / cases:.4f},\treplacement_counter:{cache._replacement_counter},\tper replacement time (ns):{((te - ts) * 1000 * 1000 / cache._replacement_counter) if cache._replacement_counter else 0.0 :.4f}, per item size: {size / cases:.4f}')
             return result
 
         return wrap
@@ -183,10 +190,115 @@ class OptimizedCache3(SimpleCache):
         return str({k: v for k, v in self._data if k is not None})
 
 
+class OptimizedCache4(SimpleCache):
+    def __init__(self, capacity: int):
+        super().__init__(capacity)
+        self._data = dict()
+        def f(capacity):
+            i = 0
+            while i < capacity:
+                yield i
+                i += 1
+
+        self._available_idxes = f(capacity)  # [idx3]
+        self._used_idxes = dict()  # key -> idx
+
+    def put(self, key, value):
+        if key in self._used_idxes:
+            self._data[self._used_idxes[key]] = (key, value)
+        else:
+            try:
+                idx = next(self._available_idxes)
+                self._data[idx] = (key, value)
+                self._used_idxes[key] = idx
+            except:
+                self._replace(key, value)
+
+    def get(self, key):
+        return self._data[self._used_idxes[key]][1]
+
+    def delete(self, key):
+        idx = self._used_idxes[key]
+        self._delete_key(key)
+        self._delete_idx(idx)
+
+    def _replace(self, key, value):
+
+        random_idx = random.randint(0, self._capacity - 1)
+        random_key, _ = self._data[random_idx]
+        self._delete_idx(random_idx)
+        self._delete_key(random_key)
+        self.put(key, value)
+        self._replacement_counter += 1
+
+    def _delete_idx(self, idx: int):
+        del self._data[idx]
+        self._available_idxes = chain(self._available_idxes, (i for i in [idx]))
+
+    def _delete_key(self, key):
+        del self._used_idxes[key]
+
+    def __str__(self):
+        return str({k: v for k, v in self._data.items() if k is not None})
+
+
+class OptimizedCache5(SimpleCache):
+    def __init__(self, capacity: int):
+        super().__init__(capacity)
+        self._data = [(None, None) for _ in range(capacity)]  # [(key1, value1), (key2, value2), (None, None)]
+
+        def f(capacity):
+            i = 0
+            while i < capacity:
+                yield i
+                i += 1
+
+        self._available_idxes = f(capacity)  # [idx3]
+        self._used_idxes = dict()  # key -> idx
+
+    def put(self, key, value):
+        if key in self._used_idxes:
+            self._data[self._used_idxes[key]] = (key, value)
+        else:
+            try:
+                idx = next(self._available_idxes)
+                self._data[idx] = (key, value)
+                self._used_idxes[key] = idx
+            except:
+                self._replace(key, value)
+
+    def get(self, key):
+        return self._data[self._used_idxes[key]][1]
+
+    def delete(self, key):
+        idx = self._used_idxes[key]
+        self._delete_key(key)
+        self._delete_idx(idx)
+
+    def _replace(self, key, value):
+
+        random_idx = random.randint(0, self._capacity - 1)
+        random_key, _ = self._data[random_idx]
+        self._delete_idx(random_idx)
+        self._delete_key(random_key)
+        self.put(key, value)
+        self._replacement_counter += 1
+
+    def _delete_idx(self, idx: int):
+        self._data[idx] = (None, None)
+        self._available_idxes = chain(self._available_idxes, (i for i in [idx]))
+
+    def _delete_key(self, key):
+        del self._used_idxes[key]
+
+    def __str__(self):
+        return str({k: v for k, v in self._data if k is not None})
+
+
 if __name__ == '__main__':
     # correctness check:
 
-    o = OptimizedCache3(3)
+    o = OptimizedCache5(3)
     o.put(1, 1)
     o.put(2, 2)
     o.put(3, 3)
@@ -206,15 +318,17 @@ if __name__ == '__main__':
 
     # performance
 
-    capacity = 100000
-    for exp_c in range(3, 6):
+
+    for exp_c in range(3, 10):
         capacity = 10 ** exp_c
-        for exp in range(12, 20):
+        for exp in range(0, 20):
             cases = 2 ** exp
             simple_c = SimpleCache(capacity)
             optimized_c = OptimizedCache(capacity)
             optimized2_c = OptimizedCache2(capacity)
             optimized3_c = OptimizedCache3(capacity)
+            optimized4_c = OptimizedCache4(capacity)
+            optimized5_c = OptimizedCache5(capacity)
 
 
             @timing(cases, capacity)
@@ -227,6 +341,8 @@ if __name__ == '__main__':
             ordered_inputs(optimized_c)
             ordered_inputs(optimized2_c)
             ordered_inputs(optimized3_c)
+            ordered_inputs(optimized4_c)
+            ordered_inputs(optimized5_c)
 
             print("-------------------------------------------------------------------------\n")
         print("\n\n\n==================================================================\n")
