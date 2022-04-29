@@ -294,6 +294,45 @@ class OptimizedCache5(SimpleCache):
     def __str__(self):
         return str({k: v for k, v in self._data if k is not None})
 
+class OptimizedCacheMB:
+    def __init__(self, capacity: int):
+        self._capacity = capacity
+        self._data = dict()   # key -> (value, pos)
+        self._data_list = []  # key list
+        self._replacement_counter = 0
+
+    def put(self, key, value):
+        if key in self._data:
+            self._data[key] = value, self._data[key][1]
+        elif len(self._data) == self._capacity:
+            self._replace(key, value)
+        else:
+            self._data[key] = value, len(self._data_list)
+            self._data_list.append(key)
+
+    def get(self, key):
+        return self._data[key][0]
+
+    def delete(self, key):
+        _, pos = self._data[key]
+        del self._data[key]
+        self._data_list[pos] = self._data_list[-1]
+        self._data_list.pop()
+        self._data[self._data_list[pos]] = self._data[self._data_list[pos]][0], pos
+
+    def _replace(self, key, value):
+        random_idx = random.randint(0, self._capacity - 1)
+        random_key = self._data_list[random_idx]
+        _, pos = self._data[random_key]
+        del self._data[random_key]
+        self._data[key] = value, pos
+        self._data_list[random_idx] = key
+        self._replacement_counter = self._replacement_counter + 1
+
+    def __str__(self):
+        return str(self._data)
+    
+    
 
 if __name__ == '__main__':
     # correctness check:
